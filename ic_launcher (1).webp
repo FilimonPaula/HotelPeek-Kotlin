@@ -1,0 +1,174 @@
+package com.example.kotlinhotelpeek.screens
+
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.util.Log
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.navigation.NavController
+import com.example.kotlinhotelpeek.R
+import com.example.kotlinhotelpeek.models.HotelOffer
+import com.example.kotlinhotelpeek.ui.theme.DarkRed
+import org.json.JSONObject
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HotelResultsScreen(navController: NavController) {
+    val context = LocalContext.current
+    val hotelList = remember { mutableStateListOf<HotelOffer>() }
+
+    LaunchedEffect(Unit) {
+        val result = navController.previousBackStackEntry
+            ?.savedStateHandle
+            ?.get<String>("hotelResultsJson")
+
+        val jsonString = result ?: loadCachedHotelJson(context)
+
+        Log.d("HotelResultsScreen", "Loaded hotelResultsJson: $jsonString")
+
+        if (!jsonString.isNullOrEmpty()) {
+            try {
+                val json = JSONObject(jsonString)
+                val dataArray = json.getJSONArray("data")
+
+                for (i in 0 until dataArray.length()) {
+                    val item = dataArray.getJSONObject(i)
+                    val hotel = item.getJSONObject("hotel")
+                    val name = hotel.optString("name", "Unnamed Hotel")
+
+                    val address = hotel.optJSONObject("address")
+                        ?.optJSONArray("lines")?.join(", ") ?: "Unknown address"
+
+                    val offerObj = item.getJSONArray("offers").optJSONObject(0)
+
+                    val price = offerObj?.optJSONObject("price")?.optString("total") ?: "N/A"
+                    val roomType = offerObj?.optJSONObject("room")
+                        ?.optJSONObject("typeEstimated")?.optString("category") ?: "Standard"
+
+                    val description = offerObj?.optJSONObject("room")
+                        ?.optJSONObject("description")?.optString("text")
+                        ?: "No description available."
+
+                    hotelList.add(
+                        HotelOffer(
+                            hotelName = name,
+                            roomType = roomType,
+                            price = price,
+                            description = description,
+                            address = address
+                        )
+                    )
+                }
+
+            } catch (e: Exception) {
+                Log.e("HotelResultsScreen", "Failed to parse hotel results", e)
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Hotel Results") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.navigateUp() }) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { navController.navigate("Settings") }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    }
+                    IconButton(onClick = { navController.navigate("Favorites") }) {
+                        Icon(Icons.Default.FavoriteBorder, contentDescription = "Favorites")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                )
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Hotels Found 🏨",
+                color = DarkRed,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(hotelList) { hotel ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevation = CardDefaults.cardElevation(6.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Image(
+                                painter = painterResource(R.drawable.hotel_placeholder),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(180.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(hotel.hotelName, style = MaterialTheme.typography.titleMedium)
+                            Text("${hotel.price} EUR", style = MaterialTheme.typography.bodyLarge)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "View Details →",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.clickable {
+                                    navController.currentBackStackEntry
+                                        ?.savedStateHandle
+                                        ?.set("selectedHotel", hotel.copy())
+                                    navController.navigate("HotelDetails")
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun loadCachedHotelJson(context: Context): String? {
+    val prefs = context.getSharedPreferences("hotel_cache", Context.MODE_PRIVATE)
+    return prefs.getString("last_result", null)
+}
+
+private fun isOnline(context: Context): Boolean {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val network = cm.activeNetwork ?: return false
+    val capabilities = cm.getNetworkCapabilities(network) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+}

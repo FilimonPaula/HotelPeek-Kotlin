@@ -1,0 +1,74 @@
+package com.example.kotlinhotelpeek.network
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import com.example.kotlinhotelpeek.BuildConfig
+
+object AmadeusService {
+    private const val BASE_URL = "https://test.api.amadeus.com"
+    private const val TOKEN_URL = "$BASE_URL/v1/security/oauth2/token"
+    private const val HOTEL_IDS_URL = "$BASE_URL/v1/reference-data/locations/hotels/by-city"
+    private const val HOTEL_OFFERS_URL = "$BASE_URL/v3/shopping/hotel-offers"
+
+    // Read from local.properties via buildConfig
+    private val CLIENT_ID = BuildConfig.AMADEUS_CLIENT_ID
+    private val CLIENT_SECRET = BuildConfig.AMADEUS_CLIENT_SECRET
+
+    private val client = OkHttpClient()
+
+    suspend fun getAccessToken(): String = withContext(Dispatchers.IO) {
+        val body = "grant_type=client_credentials&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET"
+            .toRequestBody("application/x-www-form-urlencoded".toMediaType())
+
+        val request = Request.Builder()
+            .url(TOKEN_URL)
+            .post(body)
+            .build()
+
+        val response = client.newCall(request).execute()
+        val json = JSONObject(response.body?.string() ?: "")
+        json.getString("access_token")
+    }
+
+    suspend fun searchHotels(
+        cityCode: String,
+        checkIn: String,
+        checkOut: String,
+        guests: String
+    ): String = withContext(Dispatchers.IO) {
+        val token = getAccessToken()
+
+        val hotelIdsRequest = Request.Builder()
+            .url("$HOTEL_IDS_URL?cityCode=$cityCode")
+            .header("Authorization", "Bearer $token")
+            .build()
+
+        val hotelIdsResponse = client.newCall(hotelIdsRequest).execute()
+        val hotelIdsJson = JSONObject(hotelIdsResponse.body?.string() ?: "")
+        val hotelIds = hotelIdsJson.getJSONArray("data")
+
+        if (hotelIds.length() == 0) throw Exception("No hotels found.")
+
+        // Limit the number of hotel IDs to avoid "request line size exceeding 7168"
+        val maxIds = 20
+        val ids = (0 until minOf(hotelIds.length(), maxIds)).joinToString(",") {
+            hotelIds.getJSONObject(it).getString("hotelId")
+        }
+
+        val offersUrl =
+            "$HOTEL_OFFERS_URL?hotelIds=$ids&adults=$guests&checkInDate=$checkIn&checkOutDate=$checkOut"
+
+        val offersRequest = Request.Builder()
+            .url(offersUrl)
+            .header("Authorization", "Bearer $token")
+            .build()
+
+        val offersResponse = client.newCall(offersRequest).execute()
+        offersResponse.body?.string() ?: throw Exception("No response from hotel offers")
+    }
+}

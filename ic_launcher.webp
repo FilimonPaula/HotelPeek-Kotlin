@@ -1,0 +1,160 @@
+package com.example.kotlinhotelpeek.screens
+
+import android.content.Context
+import android.util.Log
+import android.widget.Toast
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
+import com.example.kotlinhotelpeek.network.AmadeusService
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+
+@Composable
+fun HomeScreen(navController: NavController) {
+    val context = LocalContext.current
+
+    var userName by remember { mutableStateOf("Guest") }
+    var location by remember { mutableStateOf("") }
+    var checkIn by remember { mutableStateOf("") }
+    var checkOut by remember { mutableStateOf("") }
+    var guests by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        val user = FirebaseAuth.getInstance().currentUser
+        user?.let {
+            val uid = it.uid
+            try {
+                val doc = FirebaseFirestore.getInstance()
+                    .collection("users")
+                    .document(uid)
+                    .get()
+                    .await()
+
+                val firstName = doc.getString("firstName") ?: ""
+                val lastName = doc.getString("lastName") ?: ""
+                userName = "$firstName $lastName".trim().ifEmpty { it.email ?: "Guest" }
+            } catch (e: Exception) {
+                userName = user.email ?: "Guest"
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.Start
+    ) {
+        Text(text = "Hello,", style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = userName,
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        Text(
+            text = "Give us the details to find the best for you",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(vertical = 12.dp)
+        )
+
+        OutlinedTextField(
+            value = location,
+            onValueChange = { location = it },
+            label = { Text("Location (e.g., PAR)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = checkIn,
+            onValueChange = { checkIn = it },
+            label = { Text("Check In (YYYY-MM-DD)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = checkOut,
+            onValueChange = { checkOut = it },
+            label = { Text("Check Out (YYYY-MM-DD)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = guests,
+            onValueChange = { guests = it },
+            label = { Text("Number of Guests") },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+
+        Button(
+            onClick = {
+                if (location.isEmpty() || checkIn.isEmpty() || checkOut.isEmpty() || guests.isEmpty()) {
+                    Toast.makeText(context, "Please fill in all fields", Toast.LENGTH_SHORT).show()
+                } else {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val result = AmadeusService.searchHotels(
+                                cityCode = location.uppercase(),
+                                checkIn = checkIn,
+                                checkOut = checkOut,
+                                guests = guests
+                            )
+
+                            withContext(Dispatchers.Main) {
+                                val json = JSONObject(result)
+                                if (json.has("data")) {
+                                    val prefs = context.getSharedPreferences("hotel_cache", Context.MODE_PRIVATE)
+                                    prefs.edit().putString("last_result", result).apply()
+
+                                    navController.currentBackStackEntry?.savedStateHandle?.set("hotelResultsJson", result)
+                                    navController.navigate("HotelResults")
+                                } else if (json.has("errors")) {
+                                    val error = json.getJSONArray("errors").getJSONObject(0).getString("detail")
+                                    Toast.makeText(context, "API Error: $error", Toast.LENGTH_LONG).show()
+                                }
+                            }
+
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                val prefs = context.getSharedPreferences("hotel_cache", Context.MODE_PRIVATE)
+                                val cached = prefs.getString("last_result", null)
+
+                                if (!cached.isNullOrEmpty()) {
+                                    Toast.makeText(context, "Offline. Showing last search.", Toast.LENGTH_LONG).show()
+                                    navController.currentBackStackEntry?.savedStateHandle?.set("hotelResultsJson", cached)
+                                    navController.navigate("HotelResults")
+                                } else {
+                                    Toast.makeText(context, "Offline and no cached data.", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 20.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+        ) {
+            Text(text = "Find", color = MaterialTheme.colorScheme.onPrimary)
+        }
+    }
+}

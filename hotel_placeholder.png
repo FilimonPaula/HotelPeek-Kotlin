@@ -1,0 +1,15 @@
+package com.example.kotlinhotelpeek.models
+
+import android.os.Parcelable
+import kotlinx.parcelize.Parcelize
+
+@Parcelize
+data class HotelOffer(
+    val hotelName: String = "",
+    val roomType: String = "",
+    val price: String = "",
+    val rating: String = "★★★★☆",
+    val description: String = "",
+    val address: String = "Unknown address",
+    val amenities: List<String> = listOf("WiFi", "Parking etc")
+) : Parcelable
